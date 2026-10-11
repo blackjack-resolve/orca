@@ -27,3 +27,9 @@ export const FederationAttachStartParams = z.object({
   timeoutMs: OptionalFiniteNumber,
   devMode: z.boolean().optional()
 })
+
+export const FederationWorkerStartCheckParams = z.object({
+  taskSpec: requiredString('Missing Task spec'),
+  worktree: requiredString('Missing remote worktree selector'),
+  repo: OptionalString
+})

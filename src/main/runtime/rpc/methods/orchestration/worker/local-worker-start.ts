@@ -34,13 +34,7 @@ import { tearDownFailedWorkerStart } from './failed-worker-start-teardown'
 import { requireWorkerAuthority, type WorkerEffect } from './worker-topology'
 import { prepareLocalWorkerStart } from './worker-start-validation'
 import { deliverAndSettleWorkerStartReadiness } from './worker-start-readiness-settlement'
-
-type WorkerStartMutation = {
-  callerFingerprint: string
-  requestId: string
-  method: string
-  payloadHash: string
-}
+import { assertLocalWorkerStartCheck } from './worker-start-check'
 
 export async function startLocalWorker(args: {
   params: WorkerStartInput
@@ -50,17 +44,17 @@ export async function startLocalWorker(args: {
   coordinator: OrchestrationCallerIdentity | null
   callerSession?: OrchestrationSessionCaller
   existingTask?: TaskRow
-  orchestrationMutation?: WorkerStartMutation
+  orchestrationMutation?: Parameters<
+    OrchestrationDb['createStartingWorkerDispatch']
+  >[0]['mutationReceipt']
   /** Settings-driven; the executing host still gets to refuse below. */
   mode: WorkerStartModeReceipt
 }): Promise<unknown> {
-  const { runtime, db, run, coordinator, callerSession, existingTask } = args
-  const { orchestrationMutation } = args
+  const { runtime, db, run, coordinator, callerSession, existingTask, orchestrationMutation } = args
   // `--terminal` names a party: a chat by its `/clear` root address, as its Dispatch does.
   const terminal = args.params.terminal && resolveDispatchAssigneeParty(args.params.terminal, db)
   const params = terminal ? { ...args.params, terminal: terminal.address } : args.params
   const chat = terminal ? chatAssigneeOf(terminal) : null
-  const coordinatorPane = coordinator?.paneKey ?? null
   const requestedWorktree = params.worktree ?? 'current'
   const createsWorktree = requestedWorktree === 'new-child' || requestedWorktree === 'new-top-level'
   const launchParams = await resolveWorkerConfiguredAgentParams(runtime, params, async () => {
@@ -150,6 +144,12 @@ export async function startLocalWorker(args: {
         : 'orchestration_default'
       : 'existing_worktree'
   }
+  await assertLocalWorkerStartCheck(
+    runtime,
+    createsWorktree ? (params.repo ?? creationWorktree!.repoId) : undefined,
+    resolvedWorktree,
+    params.spec ?? existingTask?.spec ?? ''
+  )
   const started = db.createStartingWorkerDispatch({
     creator: resolveDispatchCreator(runtime, params.from, callerSession),
     maxDepth: runtime.getNestedWorkerMaxDepth(),
@@ -161,7 +161,7 @@ export async function startLocalWorker(args: {
     taskRunId: run.id,
     // A handle-less session creates root Tasks: Task lineage is recorded by terminal only.
     taskCreatedByTerminalHandle: coordinator?.terminalHandle ?? undefined,
-    taskCreatedByPaneKey: coordinatorPane ?? undefined,
+    taskCreatedByPaneKey: coordinator?.paneKey ?? undefined,
     taskCreatedByProcessIncarnation: coordinator?.terminalHandle
       ? (runtime.getTerminalProcessIncarnation(coordinator.terminalHandle) ?? undefined)
       : undefined,

@@ -20,6 +20,8 @@ import {
   persistFederatedSetupWaitOutcome
 } from './federation-setup'
 import { FederationAttachStartParams } from './federation-start-schema'
+import { FederationWorkerStartCheckParams } from '../../../../../../shared/rpc-contract/orchestration-federation-start-params'
+import { assertLocalWorkerStartCheck } from '../worker/worker-start-check'
 import { failFederatedAttachmentWithReceipt } from './federation-start-receipt'
 import { prepareFederationWorkerLaunchOnHost } from '../worker/worker-opencode-model-preflight'
 import {
@@ -30,6 +32,19 @@ import { assertWorkerStartTaskSpecWithinPromptBudget } from '../worker/worker-st
 import { prepareFederatedAttachmentAuthority } from './federation-attachment-authority'
 
 export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
+  defineMethod({
+    name: 'orchestration.federationWorkerStartCheck',
+    permission: 'workspace',
+    params: FederationWorkerStartCheckParams,
+    handler: async (params, { runtime }) => {
+      const worktree =
+        params.worktree === 'new-top-level'
+          ? undefined
+          : await runtime.showManagedTerminalWorkspace(params.worktree)
+      await assertLocalWorkerStartCheck(runtime, params.repo, worktree, params.taskSpec)
+      return { status: 'passed' as const }
+    }
+  }),
   defineMethod({
     name: 'orchestration.federationAttachStart',
     params: FederationAttachStartParams,
@@ -67,6 +82,10 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
           existingPlacement: 'an exact existing folder workspace'
         })
       }
+      const checkWorktree = createsWorktree
+        ? undefined
+        : await runtime.showManagedTerminalWorkspace(params.worktree)
+      await assertLocalWorkerStartCheck(runtime, params.repo, checkWorktree, params.taskSpec)
 
       const db = runtime.getOrchestrationDb()
       db.createRemoteDispatchAttachment({

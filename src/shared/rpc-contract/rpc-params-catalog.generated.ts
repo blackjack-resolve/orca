@@ -370,7 +370,10 @@ import {
   FederationImportParams,
   FederationPullParams
 } from './orchestration-federation-relay-params'
-import { FederationAttachStartParams } from './orchestration-federation-start-params'
+import {
+  FederationAttachStartParams,
+  FederationWorkerStartCheckParams
+} from './orchestration-federation-start-params'
 import {
   GateCreateParams,
   GateListParams,
@@ -1023,6 +1026,7 @@ export const RPC_PARAMS_BY_METHOD = {
   'orchestration.federationRelease': FederationDispatchParams,
   'orchestration.federationShow': FederationDispatchParams,
   'orchestration.federationStop': FederationDispatchParams,
+  'orchestration.federationWorkerStartCheck': FederationWorkerStartCheckParams,
   'orchestration.gateCreate': GateCreateParams,
   'orchestration.gateList': GateListParams,
   'orchestration.gateResolve': GateResolveParams,
