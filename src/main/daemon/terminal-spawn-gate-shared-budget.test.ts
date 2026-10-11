@@ -7,7 +7,7 @@ import type { SpawnIntent } from '../../shared/host-spawn-admission'
 import { HostTerminalLedger } from './host-terminal-ledger'
 import type { SubprocessHandle } from './session-subprocess-handle'
 import { TerminalHost, type TerminalHostOptions } from './terminal-host'
-import { TerminalSpawnGate } from './terminal-spawn-gate'
+import { TerminalSpawnGate, type TerminalSpawnAdmissionMode } from './terminal-spawn-gate'
 
 type SpawnSubprocess = TerminalHostOptions['spawnSubprocess']
 
@@ -31,7 +31,10 @@ describe('one automatic-restore budget per execution host', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  function daemon(pid: number): { host: TerminalHost; gate: TerminalSpawnGate } {
+  function daemon(
+    pid: number,
+    mode: TerminalSpawnAdmissionMode = 'enforce'
+  ): { host: TerminalHost; gate: TerminalSpawnGate } {
     const spawnSubprocess = vi.fn<SpawnSubprocess>(() => {
       const childPid = nextPid++
       const handle: SubprocessHandle = {
@@ -53,7 +56,7 @@ describe('one automatic-restore budget per execution host', () => {
     })
     const gate = new TerminalSpawnGate({
       log: vi.fn(),
-      mode: 'enforce',
+      mode,
       hostTerminals: new HostTerminalLedger({
         dir,
         maxTerminals: 256,
@@ -118,6 +121,18 @@ describe('one automatic-restore budget per execution host', () => {
 
     exits.get(5000)?.(0)
     await expect(restore(serve.host, 'serve-ninth')).resolves.toMatchObject({ isNew: true })
+  })
+
+  it('counts restores an observing desktop admitted against the serve daemon budget', async () => {
+    // Why intended: the budget protects the machine, and restores the desktop already runs use it.
+    const desktop = daemon(100, 'observe')
+    const serve = daemon(200)
+    for (let i = 0; i < 8; i++) {
+      await restore(desktop.host, `desktop-${i}`)
+    }
+    await vi.advanceTimersByTimeAsync(5000)
+    await expect(restore(serve.host, 'serve-a')).rejects.toThrow('terminal_spawn_deferred:live_cap')
+    await expect(restore(serve.host, 'serve-legacy', null)).resolves.toMatchObject({ isNew: true })
   })
 
   it('spends one burst across both daemons', async () => {
