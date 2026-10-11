@@ -15,6 +15,23 @@ describe('federated worker agent launch', () => {
     vi.restoreAllMocks()
   })
 
+  it('keeps a missing worktree in the known remote-start error contract', async () => {
+    const runtime = new OrcaRuntimeService()
+    vi.spyOn(runtime, 'showManagedTerminalWorkspace').mockRejectedValue(new Error('missing'))
+    const method = ORCHESTRATION_METHODS.find(
+      (candidate) => candidate.name === 'orchestration.federationWorkerStartCheck'
+    )
+    if (!method) {
+      throw new Error('federationWorkerStartCheck method is not registered')
+    }
+
+    await expect(
+      method.handler(method.params!.parse({ worktree: 'id:missing', taskSpec: 'work' }), {
+        runtime
+      })
+    ).rejects.toMatchObject({ code: 'worktree_not_found_on_server' })
+  })
+
   it('creates an exact folder worker terminal from the agent id, never as a command', async () => {
     db = new OrchestrationDb(':memory:')
     const runtime = new OrcaRuntimeService()

@@ -26,6 +26,16 @@ import {
 } from '../../../../../../shared/orchestration-timing-budgets'
 import { assertWorkerStartTaskSpecWithinPromptBudget } from '../worker/worker-start-prompt-budget'
 import { prepareFederatedAttachmentAuthority } from './federation-attachment-authority'
+import type { OrcaRuntimeService } from '../../../../orca-runtime'
+
+async function resolveFederatedWorktree(runtime: OrcaRuntimeService, selector: string) {
+  return runtime.showManagedTerminalWorkspace(selector).catch(() => {
+    throw new OrchestrationError(
+      'worktree_not_found_on_server',
+      `Worktree ${selector} was not found on the selected worker server.`
+    )
+  })
+}
 
 export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
   defineMethod({
@@ -36,7 +46,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
       const worktree =
         params.worktree === 'new-top-level'
           ? undefined
-          : await runtime.showManagedTerminalWorkspace(params.worktree)
+          : await resolveFederatedWorktree(runtime, params.worktree)
       await assertLocalWorkerStartCheck(runtime, params.repo, worktree, params.taskSpec)
       return { status: 'passed' as const }
     }
@@ -81,7 +91,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
       }
       const checkWorktree = createsWorktree
         ? undefined
-        : await runtime.showManagedTerminalWorkspace(params.worktree)
+        : await resolveFederatedWorktree(runtime, params.worktree)
       await assertLocalWorkerStartCheck(runtime, params.repo, checkWorktree, params.taskSpec)
 
       const db = runtime.getOrchestrationDb()
@@ -131,12 +141,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
         if (createsWorktree) {
           ;({ worktree, terminalHandle } = await launchAgent())
         } else {
-          worktree = await runtime.showManagedTerminalWorkspace(params.worktree).catch(() => {
-            throw new OrchestrationError(
-              'worktree_not_found_on_server',
-              `Worktree ${params.worktree} was not found on the selected worker server.`
-            )
-          })
+          worktree = await resolveFederatedWorktree(runtime, params.worktree)
           effects.push(
             { kind: 'worktree', action: 'reused', id: worktree.id },
             { kind: 'setup', action: 'not_applicable', state: 'not_applicable' }
