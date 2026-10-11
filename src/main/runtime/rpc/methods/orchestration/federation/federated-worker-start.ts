@@ -33,6 +33,7 @@ import {
   isKnownRemoteStartFailure
 } from './federated-worker-start-receipts'
 import { parseTaskDeps } from '../worker/task-deps-argument'
+import { assertFederatedWorkerStartCheck } from './federated-worker-start-check'
 
 export async function startFederatedWorker(args: {
   params: WorkerStartInput
@@ -106,6 +107,13 @@ export async function startFederatedWorker(args: {
     effort: params.effort,
     capabilities: status.capabilities,
     serverName: server.name
+  })
+  await assertFederatedWorkerStartCheck({
+    runtime,
+    server,
+    status,
+    params: { ...params, worktree },
+    taskSpec: params.spec ?? task?.spec ?? ''
   })
   const supportsControlMail = status.capabilities?.includes(
     ORCHESTRATION_FEDERATION_CONTROL_MAIL_RUNTIME_CAPABILITY

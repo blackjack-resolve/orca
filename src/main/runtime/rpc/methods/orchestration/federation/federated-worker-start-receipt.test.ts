@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
-  ORCHESTRATION_FEDERATION_RUNTIME_CAPABILITY
+  ORCHESTRATION_FEDERATION_RUNTIME_CAPABILITY,
+  ORCHESTRATION_WORKER_START_CHECK_RUNTIME_CAPABILITY
 } from '../../../../../../shared/protocol-version'
 import { OrcaRuntimeService } from '../../../../orca-runtime'
 import { OrchestrationDb } from '../../../../orchestration/db'
 import { startFederatedWorker } from './federated-worker-start'
+import { OrchestrationError } from '../../../../orchestration/orchestration-error'
 
 describe('federated worker start receipt validation', () => {
   const databases: OrchestrationDb[] = []
@@ -40,9 +42,13 @@ describe('federated worker start receipt validation', () => {
           return {
             capabilities: [
               ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
-              ORCHESTRATION_FEDERATION_RUNTIME_CAPABILITY
+              ORCHESTRATION_FEDERATION_RUNTIME_CAPABILITY,
+              ORCHESTRATION_WORKER_START_CHECK_RUNTIME_CAPABILITY
             ]
           }
+        }
+        if (method === 'orchestration.federationWorkerStartCheck') {
+          return { status: 'passed' }
         }
         return {
           dispatchId: (params as { dispatchId: string }).dispatchId,
@@ -83,9 +89,74 @@ describe('federated worker start receipt validation', () => {
     })
     for (const call of remoteCall.mock.calls) {
       expect(call[5]).toEqual({
-        ...(call[1] === 'orchestration.federationAttachStart' ? { contractVerified: true } : {}),
+        ...([
+          'orchestration.federationAttachStart',
+          'orchestration.federationWorkerStartCheck'
+        ].includes(call[1])
+          ? { contractVerified: true }
+          : {}),
         expectedEnvironmentPairingRevision: 73
       })
     }
+  })
+
+  it('rejects a remote brief before creating a home dispatch', async () => {
+    const db = new OrchestrationDb(':memory:')
+    const runtime = new OrcaRuntimeService()
+    runtime.setOrchestrationDb(db)
+    databases.push(db)
+    const run = db.createRun({
+      objective: 'remote check',
+      coordinatorHandle: 'term_coord',
+      coordinatorPaneKey: 'tab_coord:leaf_coord'
+    })
+    const task = db.createTask({ spec: 'BAD', runId: run.id })
+    vi.spyOn(runtime, 'resolveOrchestrationWorkerServer').mockReturnValue({
+      environmentId: 'environment_remote',
+      name: 'remote',
+      peerFingerprint: 'remote_peer',
+      pairingRevision: 1
+    })
+    const remoteCall = vi
+      .spyOn(runtime, 'callOrchestrationWorkerServer')
+      .mockImplementation(async (_environmentId, method) => {
+        if (method === 'status.get') {
+          return {
+            capabilities: [
+              ORCHESTRATION_CONTRACT_RUNTIME_CAPABILITY,
+              ORCHESTRATION_FEDERATION_RUNTIME_CAPABILITY,
+              ORCHESTRATION_WORKER_START_CHECK_RUNTIME_CAPABILITY
+            ]
+          }
+        }
+        throw new OrchestrationError('worker_start_check_failed', 'bad brief')
+      })
+    await expect(
+      startFederatedWorker({
+        params: {
+          task: task.id,
+          from: 'term_coord',
+          on: 'remote',
+          worktree: 'id:remote',
+          agent: 'codex'
+        },
+        runtime,
+        db,
+        runId: run.id,
+        task,
+        orchestrationMutation: {
+          callerFingerprint: 'caller',
+          requestId: 'remote_bad',
+          method: 'orchestration.workerStart',
+          payloadHash: 'payload'
+        }
+      })
+    ).rejects.toMatchObject({ code: 'worker_start_check_failed' })
+    expect(db.getDispatchContext(task.id)).toBeUndefined()
+    expect(remoteCall.mock.calls.map((call) => call[1])).toEqual([
+      'status.get',
+      'orchestration.federationWorkerStartCheck'
+    ])
+    expect(remoteCall.mock.calls[1]?.[3]).toBe(10_000)
   })
 })

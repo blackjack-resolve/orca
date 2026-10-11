@@ -69,6 +69,23 @@ orca orchestration send \
 
 `worker_done` requires `--outcome succeeded|failed`.
 
+### Repository worker-start checks
+
+The Orca host can check a Task's full saved spec before it creates a worker Dispatch. Set
+`ORCA_WORKER_START_CHECKS` **when starting the Orca host** to a JSON object whose keys are canonical
+repository root paths and whose values are checker commands. For example:
+
+```bash
+export ORCA_WORKER_START_CHECKS='{"/absolute/repo/root":"python3 /absolute/path/check_brief.py"}'
+```
+
+The checker receives the spec on stdin. Exit 0 accepts it; a nonzero exit, missing checker,
+timeout (5 seconds), or excessive output rejects it. Use an absolute checker path outside worker
+worktrees so a branch change cannot silently replace the checker. A repository absent from the map
+keeps its existing dispatch behavior. Connected servers with this feature check on the worker host
+before the home host creates a Dispatch; older servers retain their existing behavior. Changing a
+terminal's environment after Orca starts does not change the host policy.
+
 Inspect / recover:
 
 ```bash
