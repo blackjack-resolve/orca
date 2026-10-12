@@ -4,6 +4,38 @@ import type { OrcaRuntimeService } from '../../../../orca-runtime'
 import { OrchestrationError } from '../../../../orchestration/orchestration-error'
 import type { WorkerStartInput } from '../worker/worker-start-schema'
 import { ORCHESTRATION_CONTRACT_PREFLIGHT_TIMEOUT_MS } from '../../../../../../shared/orchestration-timing-budgets'
+import { FederationWorkerStartCheckParams } from '../../../../../../shared/rpc-contract/orchestration-federation-start-params'
+import { defineMethod } from '../../../core'
+import { assertLocalWorkerStartCheck } from '../worker/worker-start-check'
+
+export async function resolveFederatedWorktree(runtime: OrcaRuntimeService, selector: string) {
+  return runtime.showManagedTerminalWorkspace(selector).catch(() => {
+    throw new OrchestrationError(
+      'worktree_not_found_on_server',
+      `Worktree ${selector} was not found on the selected worker server.`
+    )
+  })
+}
+
+export async function assertWorkerHostStartCheck(
+  runtime: OrcaRuntimeService,
+  params: { worktree: string; repo?: string; taskSpec: string }
+): Promise<void> {
+  const worktree =
+    params.worktree === 'new-top-level'
+      ? undefined
+      : await resolveFederatedWorktree(runtime, params.worktree)
+  await assertLocalWorkerStartCheck(runtime, params.repo, worktree, params.taskSpec)
+}
+
+export const FEDERATION_WORKER_START_CHECK_METHOD = defineMethod({
+  name: 'orchestration.federationWorkerStartCheck',
+  params: FederationWorkerStartCheckParams,
+  handler: async (params, { runtime }) => {
+    await assertWorkerHostStartCheck(runtime, params)
+    return { status: 'passed' as const }
+  }
+})
 
 export async function assertFederatedWorkerStartCheck(args: {
   runtime: OrcaRuntimeService

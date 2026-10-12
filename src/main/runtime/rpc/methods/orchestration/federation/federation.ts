@@ -20,8 +20,11 @@ import {
   persistFederatedSetupWaitOutcome
 } from './federation-setup'
 import { FederationAttachStartParams } from './federation-start-schema'
-import { FederationWorkerStartCheckParams } from '../../../../../../shared/rpc-contract/orchestration-federation-start-params'
-import { assertLocalWorkerStartCheck } from '../worker/worker-start-check'
+import {
+  FEDERATION_WORKER_START_CHECK_METHOD,
+  assertWorkerHostStartCheck,
+  resolveFederatedWorktree
+} from './federated-worker-start-check'
 import { failFederatedAttachmentWithReceipt } from './federation-start-receipt'
 import { prepareFederationWorkerLaunchOnHost } from '../worker/worker-opencode-model-preflight'
 import {
@@ -30,31 +33,9 @@ import {
 } from '../../../../../../shared/orchestration-timing-budgets'
 import { assertWorkerStartTaskSpecWithinPromptBudget } from '../worker/worker-start-prompt-budget'
 import { prepareFederatedAttachmentAuthority } from './federation-attachment-authority'
-import type { OrcaRuntimeService } from '../../../../orca-runtime'
-
-async function resolveFederatedWorktree(runtime: OrcaRuntimeService, selector: string) {
-  return runtime.showManagedTerminalWorkspace(selector).catch(() => {
-    throw new OrchestrationError(
-      'worktree_not_found_on_server',
-      `Worktree ${selector} was not found on the selected worker server.`
-    )
-  })
-}
 
 export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
-  defineMethod({
-    name: 'orchestration.federationWorkerStartCheck',
-    permission: 'workspace',
-    params: FederationWorkerStartCheckParams,
-    handler: async (params, { runtime }) => {
-      const worktree =
-        params.worktree === 'new-top-level'
-          ? undefined
-          : await resolveFederatedWorktree(runtime, params.worktree)
-      await assertLocalWorkerStartCheck(runtime, params.repo, worktree, params.taskSpec)
-      return { status: 'passed' as const }
-    }
-  }),
+  FEDERATION_WORKER_START_CHECK_METHOD,
   defineMethod({
     name: 'orchestration.federationAttachStart',
     params: FederationAttachStartParams,
@@ -92,10 +73,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
           existingPlacement: 'an exact existing folder workspace'
         })
       }
-      const checkWorktree = createsWorktree
-        ? undefined
-        : await resolveFederatedWorktree(runtime, params.worktree)
-      await assertLocalWorkerStartCheck(runtime, params.repo, checkWorktree, params.taskSpec)
+      await assertWorkerHostStartCheck(runtime, params)
 
       const db = runtime.getOrchestrationDb()
       db.createRemoteDispatchAttachment({
