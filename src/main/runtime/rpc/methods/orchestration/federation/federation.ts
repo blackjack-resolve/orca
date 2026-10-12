@@ -20,6 +20,11 @@ import {
   persistFederatedSetupWaitOutcome
 } from './federation-setup'
 import { FederationAttachStartParams } from './federation-start-schema'
+import {
+  FEDERATION_WORKER_START_CHECK_METHOD,
+  assertWorkerHostStartCheck,
+  resolveFederatedWorktree
+} from './federated-worker-start-check'
 import { failFederatedAttachmentWithReceipt } from './federation-start-receipt'
 import { prepareFederationWorkerLaunchOnHost } from '../worker/worker-opencode-model-preflight'
 import {
@@ -30,6 +35,7 @@ import { assertWorkerStartTaskSpecWithinPromptBudget } from '../worker/worker-st
 import { prepareFederatedAttachmentAuthority } from './federation-attachment-authority'
 
 export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
+  FEDERATION_WORKER_START_CHECK_METHOD,
   defineMethod({
     name: 'orchestration.federationAttachStart',
     params: FederationAttachStartParams,
@@ -67,6 +73,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
           existingPlacement: 'an exact existing folder workspace'
         })
       }
+      await assertWorkerHostStartCheck(runtime, params)
 
       const db = runtime.getOrchestrationDb()
       db.createRemoteDispatchAttachment({
@@ -151,12 +158,7 @@ export const ORCHESTRATION_FEDERATION_ATTACH_METHODS = [
           )
           appendFederationSetupEffect(effects, setup)
         } else {
-          worktree = await runtime.showManagedTerminalWorkspace(params.worktree).catch(() => {
-            throw new OrchestrationError(
-              'worktree_not_found_on_server',
-              `Worktree ${params.worktree} was not found on the selected worker server.`
-            )
-          })
+          worktree = await resolveFederatedWorktree(runtime, params.worktree)
           effects.push(
             { kind: 'worktree', action: 'reused', id: worktree.id },
             { kind: 'setup', action: 'not_applicable', state: 'not_applicable' }

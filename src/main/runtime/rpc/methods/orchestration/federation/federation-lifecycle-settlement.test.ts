@@ -1,9 +1,11 @@
 import '../../../unused-default-rpc-methods.test-fixture'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { realpathSync } from 'node:fs'
 import {
   ORCHESTRATION_CONTRACT_VERSION,
   ORCHESTRATION_FEDERATION_CONTROL_MAIL_RUNTIME_CAPABILITY,
-  ORCHESTRATION_FEDERATION_LIFECYCLE_SETTLEMENT_RUNTIME_CAPABILITY
+  ORCHESTRATION_FEDERATION_LIFECYCLE_SETTLEMENT_RUNTIME_CAPABILITY,
+  ORCHESTRATION_WORKER_START_CHECK_RUNTIME_CAPABILITY
 } from '../../../../../../shared/protocol-version'
 import type { RuntimeRpcResponse } from '../../../../../../shared/runtime-rpc-envelope'
 import { OrcaRuntimeService } from '../../../../orca-runtime'
@@ -13,6 +15,7 @@ import { waitForFederatedLifecycleSettlement } from '../../../../orchestration/f
 import { RpcDispatcher } from '../../../dispatcher'
 import { ORCHESTRATION_METHODS } from '../../orchestration'
 import { createFederationWorkerStartRequest as startRequest } from './federation-request.test-support'
+import type { Repo } from '../../../../../../shared/repo-types'
 
 describe('orchestration federation lifecycle settlement', () => {
   let homeDb: OrchestrationDb
@@ -79,6 +82,7 @@ describe('orchestration federation lifecycle settlement', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllEnvs()
     homeRuntime.stopOrchestrationFederationRelay()
     homeDb.close()
     workerDb.close()
@@ -219,10 +223,34 @@ describe('orchestration federation lifecycle settlement', () => {
     return workerCapabilities.filter(
       (capability) =>
         capability !== ORCHESTRATION_FEDERATION_LIFECYCLE_SETTLEMENT_RUNTIME_CAPABILITY &&
+        capability !== ORCHESTRATION_WORKER_START_CHECK_RUNTIME_CAPABILITY &&
         (protocolVersion === 2 ||
           capability !== ORCHESTRATION_FEDERATION_CONTROL_MAIL_RUNTIME_CAPABILITY)
     )
   }
+
+  it('runs the worker host checker before the home creates a dispatch', async () => {
+    const repo: Repo = {
+      id: 'windows-repo',
+      path: process.cwd(),
+      kind: 'git',
+      displayName: 'remote check',
+      badgeColor: '#333',
+      addedAt: 0
+    }
+    vi.spyOn(workerRuntime, 'listRepos').mockReturnValue([repo])
+    vi.mocked(workerRuntime.showRepo).mockResolvedValue(repo)
+    vi.stubEnv(
+      'ORCA_WORKER_START_CHECKS',
+      JSON.stringify({
+        [realpathSync(repo.path)]: `"${process.execPath}" -e "process.exit(3)"`
+      })
+    )
+    const task = createHomeTask()
+    const response = await homeDispatcher.dispatch(startRequest(task.id))
+    expect(response).toMatchObject({ ok: false, error: { code: 'worker_start_check_failed' } })
+    expect(homeDb.getDispatchContext(task.id)).toBeUndefined()
+  })
 
   it('waits for Run-home settlement when an older CLI omits the wait hint', async () => {
     const task = createHomeTask()

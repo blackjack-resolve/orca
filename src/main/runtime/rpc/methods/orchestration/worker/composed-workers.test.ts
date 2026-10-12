@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { RpcContext } from '../../../core'
 import { createOrchestrationRpcHarness } from '../rpc-test-harness'
 import type { OrchestrationDb } from '../../../../orchestration/db'
 import type { OrcaRuntimeService } from '../../../../orca-runtime'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../../../shared/constants'
 import { dispatchPreambleSendOptions } from '../../../../orchestration/preamble'
+import type { Repo } from '../../../../../../shared/repo-types'
+import { assertLocalWorkerStartCheck } from './worker-start-check'
 
 describe('orchestration RPC methods', () => {
   const h = createOrchestrationRpcHarness()
@@ -164,6 +169,97 @@ describe('orchestration RPC methods', () => {
         expect.any(String),
         expect.objectContaining(dispatchPreambleSendOptions(expect.any(String)))
       )
+    })
+
+    it('checks the target repository spec before recording a worker dispatch', async () => {
+      setup()
+      mockCurrentWorkerStart()
+      const cwd = mkdtempSync(join(tmpdir(), 'orca-worker-start-check-'))
+      const priorChecks = process.env.ORCA_WORKER_START_CHECKS
+      try {
+        const script = join(cwd, 'check.cjs')
+        writeFileSync(
+          script,
+          "let spec = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (chunk) => spec += chunk); process.stdin.on('end', () => { if (spec !== 'GOOD') { process.stderr.write('bad brief'); process.exitCode = 2 } })"
+        )
+        const command = `"${process.execPath}" "${script}"`
+        process.env.ORCA_WORKER_START_CHECKS = JSON.stringify({ [realpathSync(cwd)]: command })
+        const repo: Repo = {
+          id: 'repo',
+          path: cwd,
+          displayName: 'test',
+          badgeColor: '#333',
+          addedAt: 0
+        }
+        vi.spyOn(runtime, 'listRepos').mockReturnValue([repo])
+        vi.spyOn(runtime, 'showRepo').mockResolvedValue({
+          ...repo,
+          id: 'unprotected',
+          path: tmpdir()
+        })
+        Object.assign(await runtime.showManagedTerminalWorkspace('current'), {
+          repoId: 'repo',
+          path: cwd,
+          hostId: 'local'
+        })
+        await expect(
+          assertLocalWorkerStartCheck(runtime, 'unprotected', { repoId: 'repo', path: cwd }, 'BAD')
+        ).rejects.toMatchObject({ code: 'worker_start_check_failed' })
+        const taskCount = db.listTasks().length
+        await expect(
+          call('orchestration.workerStart', { spec: 'BAD', from: 'term_coord', agent: 'codex' })
+        ).rejects.toMatchObject({ code: 'worker_start_check_failed' })
+        expect(db.listTasks()).toHaveLength(taskCount)
+
+        const bad = db.createTask({ spec: 'BAD' })
+        await expect(
+          call('orchestration.workerStart', { task: bad.id, from: 'term_coord', agent: 'codex' })
+        ).rejects.toMatchObject({
+          code: 'worker_start_check_failed',
+          message: expect.stringContaining('bad brief')
+        })
+        expect(db.getDispatchContext(bad.id)).toBeUndefined()
+
+        const good = db.createTask({ spec: 'GOOD' })
+        const result = await call('orchestration.workerStart', {
+          task: good.id,
+          from: 'term_coord',
+          agent: 'codex'
+        })
+        expect(result).toMatchObject({ state: 'ready' })
+        expect(db.getDispatchContext(good.id)).toBeDefined()
+
+        repo.hookSettings = { mode: 'auto', scripts: { setup: '', archive: '' } }
+        const cleared = db.createTask({ spec: 'BAD' })
+        await expect(
+          call('orchestration.workerStart', {
+            task: cleared.id,
+            from: 'term_coord',
+            agent: 'codex'
+          })
+        ).rejects.toMatchObject({ code: 'worker_start_check_failed' })
+        expect(db.getDispatchContext(cleared.id)).toBeUndefined()
+
+        process.env.ORCA_WORKER_START_CHECKS = JSON.stringify({
+          [realpathSync(cwd)]: 'missing-worker-check-command'
+        })
+        const missing = db.createTask({ spec: 'GOOD' })
+        await expect(
+          call('orchestration.workerStart', {
+            task: missing.id,
+            from: 'term_coord',
+            agent: 'codex'
+          })
+        ).rejects.toMatchObject({ code: 'worker_start_check_failed' })
+        expect(db.getDispatchContext(missing.id)).toBeUndefined()
+      } finally {
+        if (priorChecks === undefined) {
+          delete process.env.ORCA_WORKER_START_CHECKS
+        } else {
+          process.env.ORCA_WORKER_START_CHECKS = priorChecks
+        }
+        rmSync(cwd, { recursive: true, force: true })
+      }
     })
 
     it('applies and reports opaque per-invocation model preferences', async () => {
